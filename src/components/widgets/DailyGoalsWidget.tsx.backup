@@ -1,0 +1,438 @@
+import React, { useState, useEffect } from 'react';
+import { Target, CheckCircle2, Circle, Clock, TrendingUp, Calendar, BookOpen, Timer } from 'lucide-react';
+import BaseWidget from './BaseWidget';
+import { getTodayDailyGoal, updateDailyGoalProgress, DailyGoal as DBDailyGoal } from '@/lib/database/dashboard-api';
+import { useAuth } from '@/contexts/AuthContext';
+
+interface DailyGoal {
+  id: string;
+  title: string;
+  completed: boolean;
+  targetValue: number;
+  currentValue: number;
+  unit: string;
+  category?: 'question' | 'subject' | 'time' | 'custom';
+  isManual?: boolean;
+}
+
+interface ManualGoal {
+  id: string;
+  title: string;
+  completed: boolean;
+  targetValue: number;
+  currentValue: number;
+  unit: string;
+  category: 'custom';
+  isManual: true;
+}
+
+interface DailyGoalsWidgetProps {
+  questionsToday: number;
+  dailyGoal: number;
+  goals?: ManualGoal[]; // Manuel hedefler prop'u
+  className?: string;
+  onGoalsModalOpen?: () => void;
+  onHistoryModalOpen?: () => void;
+}
+
+const DailyGoalsWidget: React.FC<DailyGoalsWidgetProps> = ({
+  questionsToday,
+  dailyGoal,
+  goals = [],
+  className = '',
+  onGoalsModalOpen,
+  onHistoryModalOpen,
+}) => {
+  const [currentGoalsState, setCurrentGoalsState] = useState(goals);
+  // Default goals if none provided
+  const defaultGoals: DailyGoal[] = [
+    {
+      id: 'main-goal',
+      title: `${dailyGoal} soru çöz`,
+      completed: questionsToday >= dailyGoal,
+      targetValue: dailyGoal,
+      currentValue: questionsToday,
+      unit: 'soru',
+      category: 'question',
+      isManual: false
+    },
+    {
+      id: 'subjects',
+      title: 'En az 2 ders çalış',
+      completed: true, // Mock: tamamlanmış
+      targetValue: 2,
+      currentValue: 2,
+      unit: 'ders',
+      category: 'subject',
+      isManual: false
+    },
+    {
+      id: 'focus',
+      title: '30 dakika odaklan',
+      completed: false, // Mock: yarı tamamlanmış
+      targetValue: 30,
+      currentValue: 15,
+      unit: 'dakika',
+      category: 'time',
+      isManual: false
+    }
+  ];
+
+  // Merge external goals with local state
+  const allGoals = [...defaultGoals, ...currentGoalsState];
+  const currentGoals = allGoals.length > 0 ? allGoals : defaultGoals;
+  const completedGoals = currentGoals.filter(goal => goal.completed).length;
+  const totalGoals = currentGoals.length;
+  const completionRate = totalGoals > 0 ? Math.round((completedGoals / totalGoals) * 100) : 0;
+  
+  // Ana hedef ilerlemen = tüm hedeflerin ortalama ilerlemesi
+  const mainProgress = currentGoals.length > 0 
+    ? currentGoals.reduce((sum, goal) => {
+        const goalProgress = Math.min((goal.currentValue / goal.targetValue) * 100, 100);
+        return sum + goalProgress;
+      }, 0) / currentGoals.length
+    : 0;
+
+  const getProgressColor = (progress: number) => {
+    if (progress >= 100) return 'from-green-500 to-emerald-500';
+    if (progress >= 75) return 'from-blue-500 to-cyan-500';
+    if (progress >= 50) return 'from-yellow-500 to-orange-500';
+    return 'from-pink-500 to-coral-500';
+  };
+
+  const getMotivationMessage = () => {
+    if (completionRate === 100) return "🎉 Tüm hedefler tamamlandı!";
+    if (completionRate >= 75) return "💪 Harika gidiyorsun!";
+    if (completionRate >= 50) return "🎯 Yarı yoldasın!";
+    if (completionRate > 0) return "🚀 Güzel bir başlangıç!";
+    return "📚 Hadi başlayalım!";
+  };
+
+  // Collapsed view content - sadece genel ilerleme
+  const collapsedView = (
+    <div className="flex items-center justify-between p-4 bg-gradient-to-r from-pink-50/50 to-purple-50/50 rounded-xl border border-pink-100/50">
+      {/* Sol: Circular Progress */}
+      <div className="flex items-center gap-4">
+        <div className="relative w-14 h-14">
+          <svg className="w-14 h-14 transform -rotate-90" viewBox="0 0 36 36">
+            <path
+              className="text-gray-200"
+              stroke="currentColor"
+              strokeWidth="3"
+              fill="transparent"
+              d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+            />
+            <path
+              className="text-pink-500"
+              stroke="currentColor"
+              strokeWidth="3"
+              fill="transparent"
+              strokeDasharray={`${mainProgress}, 100`}
+              d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+            />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-sm font-bold text-gray-700">{Math.round(mainProgress)}%</span>
+          </div>
+        </div>
+        
+        <div>
+          <p className="text-base font-semibold text-gray-800">Genel İlerleme</p>
+          <p className="text-sm text-gray-600">{completedGoals}/{totalGoals} hedef tamamlandı</p>
+          <p className="text-xs text-gray-500 mt-1">
+            {completionRate === 100 ? "🎉 Tüm hedefler tamamlandı!" : 
+             completionRate >= 75 ? "🔥 Harika gidiyorsun!" : 
+             completionRate >= 50 ? "💪 Yarı yoldasın!" : 
+             "📚 Hadi başlayalım!"}
+          </p>
+        </div>
+      </div>
+      
+      {/* Sağ: Status Icon */}
+      <div className="text-right">
+        <div className="text-2xl mb-1">
+          {completionRate === 100 ? "🎉" : completionRate >= 75 ? "🔥" : completionRate >= 50 ? "💪" : "📚"}
+        </div>
+        <p className="text-xs text-gray-500 font-medium">{Math.round(mainProgress)}%</p>
+      </div>
+    </div>
+  );
+
+  return (
+    <BaseWidget
+      title="Günlük Hedefler"
+      icon={<Target className={completionRate === 100 ? 'text-green-500' : 'text-pink-500'} />}
+      defaultExpanded={false}
+      className={className}
+      widgetId="daily-goals"
+      collapsedContent={collapsedView}
+      onAction={() => {
+        console.log('Modal açılıyor...');
+        onGoalsModalOpen?.();
+      }}
+      secondaryAction={{
+        icon: <Calendar size={16} />,
+        onClick: () => {
+          console.log('Geçmiş modal açılıyor...');
+          onHistoryModalOpen?.();
+        },
+        label: 'Geçmiş hedefleri görüntüle'
+      }}
+    >
+      <div className="space-y-5">
+        {/* Hero Progress Section */}
+        <div className="relative overflow-hidden bg-gradient-to-br from-pink-50 via-purple-50 to-indigo-50 rounded-2xl p-6 border border-pink-100/50">
+          {/* Background Pattern */}
+          <div className="absolute inset-0 opacity-5">
+            <div className="absolute inset-0 bg-gradient-to-r from-pink-500 to-purple-500" 
+                 style={{
+                   backgroundImage: `radial-gradient(circle at 20px 20px, rgba(255,255,255,0.3) 1px, transparent 1px)`,
+                   backgroundSize: '40px 40px'
+                 }}
+            />
+          </div>
+          
+          <div className="relative z-10">
+            {/* Progress Ring & Stats */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-4">
+                {/* Enhanced Progress Ring */}
+                <div className="relative w-16 h-16">
+                  <svg className="w-16 h-16 transform -rotate-90" viewBox="0 0 36 36">
+                    <path
+                      className="text-gray-200"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      fill="transparent"
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                    />
+                    <path
+                      className={completionRate === 100 ? 'text-green-500' : 'text-pink-500'}
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      fill="transparent"
+                      strokeDasharray={`${mainProgress}, 100`}
+                      strokeLinecap="round"
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      style={{
+                        transition: 'stroke-dasharray 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+                        filter: 'drop-shadow(0 2px 4px rgba(236, 72, 153, 0.2))'
+                      }}
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="text-center">
+                      <span className={`text-lg font-bold ${completionRate === 100 ? 'text-green-600' : 'text-pink-600'}`}>
+                        {Math.round(mainProgress)}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Stats */}
+                <div>
+                  <h3 className="text-lg font-bold text-gray-800 mb-1">Günlük İlerleme</h3>
+                  <p className="text-sm text-gray-600">
+                    <span className="font-semibold text-gray-800">{completedGoals}/{totalGoals}</span> hedef tamamlandı
+                  </p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <div className="flex items-center gap-1 text-xs">
+                      <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                      <span className="text-gray-600">{completedGoals} tamamlandı</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-xs">
+                      <div className="w-2 h-2 bg-gray-300 rounded-full"></div>
+                      <span className="text-gray-600">{totalGoals - completedGoals} bekliyor</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Motivation Badge */}
+              <div className="text-right">
+                <div className={`inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm font-medium ${
+                  completionRate === 100 
+                    ? 'bg-green-100 text-green-700 border border-green-200' 
+                    : completionRate >= 75 
+                      ? 'bg-orange-100 text-orange-700 border border-orange-200'
+                      : completionRate >= 50
+                        ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                        : 'bg-purple-100 text-purple-700 border border-purple-200'
+                }`}>
+                  <span className="text-lg">
+                    {completionRate === 100 ? "🎉" : completionRate >= 75 ? "🔥" : completionRate >= 50 ? "💪" : "🚀"}
+                  </span>
+                  <span>{getMotivationMessage()}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Overall Progress Bar */}
+            <div className="relative">
+              <div className="w-full bg-white/60 rounded-full h-3 overflow-hidden backdrop-blur-sm border border-white/40">
+                <div
+                  className={`h-full bg-gradient-to-r transition-all duration-1000 ease-out ${
+                    completionRate === 100 
+                      ? 'from-green-400 to-green-500' 
+                      : 'from-pink-400 via-purple-400 to-indigo-400'
+                  }`}
+                  style={{ 
+                    width: `${mainProgress}%`,
+                    boxShadow: 'inset 0 1px 2px rgba(255,255,255,0.3)'
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Goals List - Enhanced Design */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="text-base font-bold text-gray-800 flex items-center gap-2">
+              <div className="w-6 h-6 bg-gradient-to-br from-pink-500 to-purple-500 rounded-lg flex items-center justify-center">
+                <Clock size={14} className="text-white" />
+              </div>
+              Bugünkü Hedefler
+            </h4>
+            <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+              {totalGoals} hedef
+            </span>
+          </div>
+          
+          <div className="space-y-3">
+            {currentGoals.map((goal, index) => {
+              const goalProgress = goal.targetValue > 0 
+                ? Math.min(((goal.currentValue || 0) / goal.targetValue) * 100, 100) 
+                : 0;
+              return (
+                <div 
+                  key={goal.id}
+                  className={`group relative overflow-hidden rounded-xl border-2 transition-all duration-300 hover:scale-[1.02] ${
+                    goal.completed 
+                      ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200 shadow-md' 
+                      : 'bg-white border-gray-200 hover:border-pink-200 hover:shadow-lg'
+                  }`}
+                  style={{
+                    animationDelay: `${index * 100}ms`
+                  }}
+                >
+                  {/* Progress Background */}
+                  <div 
+                    className={`absolute inset-0 transition-all duration-500 ${
+                      goal.completed 
+                        ? 'bg-gradient-to-r from-green-100/50 to-emerald-100/50' 
+                        : 'bg-gradient-to-r from-pink-50/50 to-purple-50/50'
+                    }`}
+                    style={{ 
+                      width: `${goalProgress}%`,
+                      opacity: 0.6
+                    }}
+                  />
+                  
+                  <div className="relative z-10 flex items-center gap-4 p-4">
+                    {/* Status Icon */}
+                    <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${
+                      goal.completed 
+                        ? 'bg-green-500 text-white shadow-lg' 
+                        : 'bg-gray-100 text-gray-400 group-hover:bg-pink-100 group-hover:text-pink-500'
+                    }`}>
+                      {goal.completed ? (
+                        <CheckCircle2 size={20} />
+                      ) : (
+                        <Circle size={20} />
+                      )}
+                    </div>
+                    
+                    {/* Goal Content */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className={`text-sm font-semibold transition-all duration-200 ${
+                          goal.completed 
+                            ? 'text-green-800' 
+                            : 'text-gray-800 group-hover:text-gray-900'
+                        }`}>
+                          {goal.completed && <span className="mr-2">✨</span>}
+                          {goal.title}
+                          {goal.completed && <span className="ml-2 text-xs bg-green-200 text-green-700 px-2 py-0.5 rounded-full">Tamamlandı</span>}
+                        </p>
+                        
+                        {/* Progress Percentage */}
+                        <div className={`text-right ${goal.completed ? 'text-green-600' : 'text-gray-600'}`}>
+                          <span className="text-lg font-bold">{Math.round(goalProgress)}%</span>
+                        </div>
+                      </div>
+                      
+                      {/* Progress Details */}
+                      {goal.targetValue && (
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1 mr-4">
+                            <div className="relative">
+                              <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full transition-all duration-700 ease-out ${
+                                    goal.completed 
+                                      ? 'bg-gradient-to-r from-green-400 to-green-500' 
+                                      : 'bg-gradient-to-r from-pink-400 to-purple-500'
+                                  }`}
+                                  style={{ 
+                                    width: `${goalProgress}%`,
+                                    boxShadow: goal.completed 
+                                      ? '0 2px 4px rgba(34, 197, 94, 0.3)' 
+                                      : '0 2px 4px rgba(236, 72, 153, 0.3)'
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+                            goal.completed 
+                              ? 'bg-green-100 text-green-700' 
+                              : 'bg-gray-100 text-gray-600'
+                          }`}>
+                            {goal.currentValue || 0}/{goal.targetValue} {goal.unit}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Completed Shine Effect */}
+                  {goal.completed && (
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-pulse" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+
+        {/* İstatistikler */}
+        {questionsToday > 0 && (
+          <div className="grid grid-cols-2 gap-3 pt-4 border-t border-gray-200">
+            <div className="text-center">
+              <div className="flex items-center justify-center mb-1">
+                <TrendingUp className="w-4 h-4 text-blue-500" />
+              </div>
+              <div className="text-lg font-bold text-blue-600">{questionsToday}</div>
+              <p className="text-xs text-gray-500">Bugün Çözülen</p>
+            </div>
+            
+            <div className="text-center">
+              <div className="flex items-center justify-center mb-1">
+                <Target className="w-4 h-4 text-green-500" />
+              </div>
+              <div className="text-lg font-bold text-green-600">{dailyGoal}</div>
+              <p className="text-xs text-gray-500">Günlük Hedef</p>
+            </div>
+          </div>
+        )}
+      </div>
+      
+    </BaseWidget>
+  );
+};
+
+export default DailyGoalsWidget;
